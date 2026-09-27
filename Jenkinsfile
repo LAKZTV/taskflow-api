@@ -22,7 +22,10 @@ pipeline {
       steps { sh 'echo deploying to staging...' }
     }
     stage('Deploy — Production') {
-      when { branch 'main' }
+      when {
+        branch 'main'
+        beforeInput true   // เช็ก branch ก่อนถาม input — ไม่งั้น input ถามทุก branch ก่อนเช็ก when (ค่า default)
+      }
       input { message 'Deploy to production?' }
       steps { sh 'echo deploying to production...' }
     }
