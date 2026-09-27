@@ -16,7 +16,9 @@
     "migration:run": "npm run typeorm -- migration:run",
     "migration:revert": "npm run typeorm -- migration:revert",
     "seed:rooms": "ts-node src/database/seed-rooms.ts",
-    "seed:users": "ts-node src/database/seed-users.ts"
+    "seed:users": "ts-node src/database/seed-users.ts",
+    "lint:ci": "eslint \"{src,test}/**/*.ts\"",
+    "test:ci": "jest --coverage --ci --reporters=default --reporters=jest-junit"
   },
   "dependencies": {
     "@nestjs/bullmq": "^11.0.5",
@@ -45,6 +47,8 @@
     "typeorm": "^0.3.20"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@microsoft/eslint-formatter-sarif": "^3.1.0",
     "@nestjs/cli": "^10.4.9",
     "@nestjs/schematics": "^10.2.3",
     "@nestjs/testing": "^10.4.15",
@@ -55,11 +59,15 @@
     "@types/nodemailer": "^8.0.2",
     "@types/passport-jwt": "^4.0.1",
     "@types/supertest": "^6.0.2",
+    "eslint": "^10.11.0",
+    "eslint-plugin-security": "^4.0.1",
     "jest": "^29.7.0",
+    "jest-junit": "^17.0.0",
     "supertest": "^7.0.0",
     "ts-jest": "^29.2.5",
     "ts-node": "^10.9.2",
-    "typescript": "^5.7.2"
+    "typescript": "^5.7.2",
+    "typescript-eslint": "^8.70.1"
   },
   "jest": {
     "moduleFileExtensions": [
@@ -72,6 +80,24 @@
     "transform": {
       "^.+\\.(t|j)s$": "ts-jest"
     },
-    "testEnvironment": "node"
+    "testEnvironment": "node",
+    "collectCoverageFrom": [
+      "common/**/*.ts",
+      "config/**/*.ts",
+      "!config/data-source.ts",
+      "!common/decorators/**",
+      "!common/guards/jwt-auth.guard.ts",
+      "!**/*.spec.ts"
+    ],
+    "coverageReporters": [
+      "text",
+      "lcov",
+      "cobertura"
+    ],
+    "coverageDirectory": "../coverage"
+  },
+  "jest-junit": {
+    "outputDirectory": "reports",
+    "outputName": "junit.xml"
   }
 }

@@ -8,3 +8,5 @@ coverage/
 # uploaded payment slips (runtime data)
 uploads/*
 !uploads/.gitkeep
+reports/
+*.sarif
