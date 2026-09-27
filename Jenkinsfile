@@ -1,4 +1,4 @@
-// Lab 03 - first declarative pipeline (Install, Lint, Unit Test) running in a Docker agent
+// Lab 04 - Lab 03 plus branch-gated deploy stages (use with a Multibranch Pipeline job)
 pipeline {
   agent { docker { image 'node:20-alpine' } }
 
@@ -8,16 +8,24 @@ pipeline {
   }
 
   options {
-    // ทุก pipeline ต้องมีเพดานเวลา: npm install ที่ค้างเพราะเน็ต/registry ล่ม หรือเทสต์ที่วนไม่จบ
-    // จะยึด executor ไว้ตลอดไป งานอื่นในคิวก็ต้องรอ (และในคลาวด์ก็เสียเงินเปล่า ๆ)
-    // timeout ทำให้ build "ล้มเร็วและดัง" แทนที่จะ "ค้างเงียบ ๆ"
-    timeout(time: 10, unit: 'MINUTES')
+    // timeout นับรวมเวลารอ input ของ Deploy — Production ด้วย: ต้องกดอนุมัติภายในเวลานี้
+    timeout(time: 30, unit: 'MINUTES')
   }
 
   stages {
     stage('Install')   { steps { sh 'npm ci' } }
-    stage('Lint')      { steps { sh 'npm run lint:ci' } }   // ไม่ใช้ npm run lint เพราะมี --fix
+    stage('Lint')      { steps { sh 'npm run lint:ci' } }
     stage('Unit Test') { steps { sh 'npm test' } }
+
+    stage('Deploy — Staging') {
+      when { branch 'develop' }
+      steps { sh 'echo deploying to staging...' }
+    }
+    stage('Deploy — Production') {
+      when { branch 'main' }
+      input { message 'Deploy to production?' }
+      steps { sh 'echo deploying to production...' }
+    }
   }
 
   post {
