@@ -10,3 +10,6 @@ uploads/*
 !uploads/.gitkeep
 reports/
 *.sarif
+playwright-report/
+test-results/
+.scannerwork/

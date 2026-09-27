@@ -1,0 +1,9 @@
+# CI override: publishes no host ports, so it never collides with a dev stack on 3000/5433/6379.
+# Tests reach the API over the compose network instead (http://api:3000).
+services:
+  api:
+    ports: !reset []
+  postgres:
+    ports: !reset []
+  redis:
+    ports: !reset []
