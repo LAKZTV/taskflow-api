@@ -1,0 +1,59 @@
+services:
+  api:
+    build:
+      context: .
+      target: production
+    env_file: .env
+    environment:
+      # Inside the compose network the API talks to the container ports
+      # directly, so these override whatever .env says for host access.
+      DB_HOST: postgres
+      DB_PORT: 5432
+      REDIS_URL: redis://redis:6379
+      # Slip uploads live on a named volume so they survive redeploys.
+      UPLOAD_DIR: /app/uploads
+    ports:
+      - "3000:3000"
+    volumes:
+      - uploads:/app/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${DB_USER:-poonsuk}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-poonsuk_dev_password}
+      POSTGRES_DB: ${DB_NAME:-poonsuk}
+    ports:
+      # Host 5433 -> container 5432. 5432 on the host is taken by another
+      # PostgreSQL, so DB_PORT in .env must be 5433 when running the API
+      # from Windows.
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-poonsuk}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Reserved for Sprint 3 (cache / distributed lock / BullMQ broker).
+  # Started now so compose does not need changing later.
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  pgdata:
+  uploads:

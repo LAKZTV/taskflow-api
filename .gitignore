@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.env
+.env.example
+*.log
+coverage/
+
+# uploaded payment slips (runtime data)
+uploads/*
+!uploads/.gitkeep
