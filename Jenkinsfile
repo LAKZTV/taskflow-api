@@ -89,7 +89,10 @@ pipeline {
       steps { sh 'echo deploying to staging...' }
     }
     stage('Deploy — Production') {
-      when { branch 'main' }
+      when {
+        branch 'main'
+        beforeInput true   // เช็ก branch ก่อนถาม input — ไม่งั้นถามทุก branch (ค่า default ของ Jenkins)
+      }
       input { message 'Deploy to production?' }
       steps { sh 'echo deploying to production...' }
     }
