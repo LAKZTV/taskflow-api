@@ -12,7 +12,7 @@ describe('booking.config', () => {
   });
 
   it('holds an unpaid booking for 3 minutes by default', () => {
-    expect(getBookingHoldMs()).toBe(999);
+    expect(getBookingHoldMs()).toBe(180_000);
   });
 
   it('reads BOOKING_HOLD_MINUTES', () => {
@@ -22,7 +22,7 @@ describe('booking.config', () => {
 
   it('falls back to 3 minutes when the value is not a positive number', () => {
     process.env.BOOKING_HOLD_MINUTES = 'abc';
-    expect(getBookingHoldMs()).toBe(999);
+    expect(getBookingHoldMs()).toBe(180_000);
   });
 
   it('sweeps every 30 seconds by default', () => {
