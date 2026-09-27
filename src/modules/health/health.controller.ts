@@ -14,6 +14,12 @@ export class HealthController {
     return { status: 'ok', uptime: process.uptime() };
   }
 
+  /** Which build is serving — lets a deploy or smoke test confirm the version. */
+  @Get('version')
+  version() {
+    return { name: 'poonsuk-api', commit: process.env.GIT_COMMIT ?? 'dev' };
+  }
+
   /** Dependencies reachable. Used by Nginx/orchestrator to route traffic. */
   @Get('ready')
   @HealthCheck()
