@@ -50,9 +50,9 @@ variable "allowed_cidr" {
 }
 
 variable "ami_id" {
-  description = "AMI for the instance (LocalStack accepts any ami-* id)"
+  description = "AMI for the instance (must be one LocalStack's mock EC2 backend actually knows about)"
   type        = string
-  default     = "ami-0c55b159cbfafe1f0"
+  default     = "ami-760aaa0f"
 }
 
 resource "aws_security_group" "app" {
