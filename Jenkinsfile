@@ -1,7 +1,11 @@
-// Lab 06 - shift-left security: Secrets -> SAST -> SCA -> SBOM -> Policy, then the Lab 05 gates
-// Tools run through `docker run --volumes-from jenkins` so they see the same workspace path.
+// Lab 07 - Lab 06 plus: versioned image build, Trivy gate, blue/green deploy to kind with automatic rollback
 pipeline {
   agent { label 'built-in' }
+
+  parameters {
+    booleanParam(name: 'INJECT_BROKEN_IMAGE', defaultValue: false,
+                 description: 'Lab 07: deploy an image that crashes on start, to prove the automatic rollback')
+  }
 
   environment {
     APP_NAME = 'taskflow-api'
@@ -9,14 +13,12 @@ pipeline {
   }
 
   options {
-    timeout(time: 40, unit: 'MINUTES')
+    timeout(time: 45, unit: 'MINUTES')
   }
 
   stages {
     stage('Secrets Detection') {
       steps {
-        // --log-opts="--full-history" = สแกนเฉพาะประวัติของ branch ที่กำลัง build
-        // (ค่าเริ่มต้นสแกน "ทุก ref" → คีย์ที่รั่วบน scratch branch จะทำให้ main แดงไปด้วย)
         sh '''
           docker run --rm --volumes-from jenkins -w "$WORKSPACE" \
             zricethezav/gitleaks:latest detect --source . --no-banner --redact \
@@ -67,12 +69,9 @@ pipeline {
       steps {
         script {
           sh 'npm audit --audit-level=high --json > audit.json || true'
-          // ใช้ node อ่าน JSON แทน jq (node:20-alpine ไม่มี jq)
           def critical = sh(script: "node -p \"require('./audit.json').metadata.vulnerabilities.critical\"", returnStdout: true).trim().toInteger()
           def high     = sh(script: "node -p \"require('./audit.json').metadata.vulnerabilities.high\"", returnStdout: true).trim().toInteger()
           if (critical > 0) {
-            // catchError: stage + build เป็น FAILURE แต่ pipeline วิ่งต่อถึง Policy Gate
-            // เพื่อให้เห็นทั้งสอง gate ทำงานบนข้อมูลชุดเดียวกัน
             catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
               error("Blocking: ${critical} critical vulnerabilities found")
             }
@@ -106,7 +105,6 @@ pipeline {
 
     stage('Policy Gate') {
       steps {
-        // --fail-defined: ถ้า deny มีสมาชิกแม้ 1 ตัว → exit code 1 → stage ล้ม
         sh '''
           docker run --rm --volumes-from jenkins -w "$WORKSPACE" \
             openpolicyagent/opa:latest eval --fail-defined --format pretty \
@@ -136,7 +134,7 @@ pipeline {
       steps {
         sh 'cp .env.ci .env'
         sh 'docker compose -p taskflow-e2e -f docker-compose.yml -f docker-compose.ci.yml up -d --build --wait'
-        sh 'docker compose -p taskflow-e2e exec -T api npx typeorm migration:run -d dist/config/data-source.js'
+        sh 'docker compose -p taskflow-e2e exec -T api node_modules/.bin/typeorm migration:run -d dist/config/data-source.js'
         sh 'docker compose -p taskflow-e2e exec -T api node dist/database/seed-rooms.js'
       }
     }
@@ -167,17 +165,78 @@ pipeline {
       }
     }
 
+    stage('Build Image') {
+      steps {
+        script { env.IMAGE_TAG = env.GIT_COMMIT.take(7) }        // tag ไม่เปลี่ยนแปลง ผูกกับ commit — ห้าม latest
+        sh '''
+          docker build --build-arg GIT_COMMIT=$IMAGE_TAG \
+            -t taskflow-api:$IMAGE_TAG -t localhost:5000/taskflow-api:$IMAGE_TAG .
+          docker push localhost:5000/taskflow-api:$IMAGE_TAG
+        '''
+      }
+    }
+
+    stage('Container Scan') {
+      steps {
+        // (1) รายงาน SARIF เสมอ (exit 0)  (2) แล้วค่อย gate: exit 1 เมื่อเจอ HIGH/CRITICAL และพิมพ์ตารางใน console
+        sh '''
+          T="docker run --rm -v trivy-cache:/root/.cache -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:latest"
+          docker run --rm --volumes-from jenkins -w "$WORKSPACE" -v trivy-cache:/root/.cache \
+            -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:latest image \
+            --severity HIGH,CRITICAL --ignore-unfixed --format sarif -o trivy.sarif taskflow-api:$IMAGE_TAG
+          $T image --exit-code 1 --severity HIGH,CRITICAL --ignore-unfixed --format table taskflow-api:$IMAGE_TAG
+        '''
+      }
+      post { always { archiveArtifacts artifacts: 'trivy.sarif', allowEmptyArchive: true } }
+    }
+
     stage('Deploy — Staging') {
       when { branch 'develop' }
       steps { sh 'echo deploying to staging...' }
     }
-    stage('Deploy — Production') {
+
+    stage('Blue/Green Deploy') {
       when {
         branch 'main'
         beforeInput true   // เช็ก branch ก่อนถาม input — ไม่งั้นถามทุก branch (ค่า default ของ Jenkins)
       }
       input { message 'Deploy to production?' }
-      steps { sh 'echo deploying to production...' }
+      steps {
+        withCredentials([file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG')]) {
+          script {
+            def current = sh(script: "kubectl get svc taskflow -o jsonpath='{.spec.selector.color}'", returnStdout: true).trim()
+            def next = (current == 'blue') ? 'green' : 'blue'
+            env.PREV_COLOR = current
+            def image = params.INJECT_BROKEN_IMAGE ? 'taskflow-api:broken' : "taskflow-api:${env.IMAGE_TAG}"
+
+            sh "kind load docker-image ${image} --name taskflow"
+            sh "kubectl set image deployment/taskflow-${next} app=${image}"
+            sh "kubectl rollout status deployment/taskflow-${next} --timeout=90s"
+
+            // smoke test pod ใหม่ตรง ๆ (ข้าม Service หลัก) และตรวจว่าเป็น "เวอร์ชันใหม่" จริง ผ่าน /api/health/version
+            def out = sh(script: "kubectl run smoke-${env.BUILD_NUMBER} --rm -i --restart=Never --image=curlimages/curl -- curl -sf http://taskflow-${next}:3000/api/health/version", returnStdout: true)
+            if (!params.INJECT_BROKEN_IMAGE && !out.contains(env.IMAGE_TAG)) {
+              error("Smoke test: taskflow-${next} is not serving commit ${env.IMAGE_TAG}: ${out}")
+            }
+
+            sh "kubectl patch svc taskflow -p '{\"spec\":{\"selector\":{\"color\":\"${next}\"}}}'"
+            echo "Switched traffic from ${current} to ${next}"
+          }
+        }
+      }
+      post {
+        failure {
+          // rollback อัตโนมัติ: ชี้ Service กลับสีเดิม (ไม่ redeploy อะไรทั้งนั้น — แค่แก้ label selector)
+          withCredentials([file(credentialsId: 'kubeconfig', variable: 'KUBECONFIG')]) {
+            sh """
+              if [ -n "${env.PREV_COLOR}" ] && [ "${env.PREV_COLOR}" != "null" ]; then
+                kubectl patch svc taskflow -p '{"spec":{"selector":{"color":"${env.PREV_COLOR}"}}}'
+                echo "ROLLBACK: traffic pinned back to ${env.PREV_COLOR}"
+              fi
+            """
+          }
+        }
+      }
     }
   }
 
