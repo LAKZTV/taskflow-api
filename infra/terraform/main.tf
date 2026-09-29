@@ -90,7 +90,8 @@ resource "aws_instance" "app" {
   }
 
   root_block_device {
-    encrypted = true
+    encrypted   = true
+    volume_size = 8
   }
 
   tags = {
