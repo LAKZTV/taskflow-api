@@ -13,3 +13,8 @@ reports/
 playwright-report/
 test-results/
 .scannerwork/
+cosign.key
+gitleaks-report.json
+audit.json
+*.cdx.json
+*.sig

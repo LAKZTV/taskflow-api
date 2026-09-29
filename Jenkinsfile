@@ -1,4 +1,5 @@
-// Lab 05 - JUnit + coverage, SonarQube quality gate, Playwright E2E
+// Lab 06 - shift-left security: Secrets -> SAST -> SCA -> SBOM -> Policy, then the Lab 05 gates
+// Tools run through `docker run --volumes-from jenkins` so they see the same workspace path.
 pipeline {
   agent { label 'built-in' }
 
@@ -8,10 +9,24 @@ pipeline {
   }
 
   options {
-    timeout(time: 30, unit: 'MINUTES')   // เพิ่มจาก 10 เพราะมี Sonar + E2E + รออนุมัติ production
+    timeout(time: 40, unit: 'MINUTES')
   }
 
   stages {
+    stage('Secrets Detection') {
+      steps {
+        // --log-opts="--full-history" = สแกนเฉพาะประวัติของ branch ที่กำลัง build
+        // (ค่าเริ่มต้นสแกน "ทุก ref" → คีย์ที่รั่วบน scratch branch จะทำให้ main แดงไปด้วย)
+        sh '''
+          docker run --rm --volumes-from jenkins -w "$WORKSPACE" \
+            zricethezav/gitleaks:latest detect --source . --no-banner --redact \
+            --log-opts="--full-history" \
+            --report-format json --report-path gitleaks-report.json --exit-code 1
+        '''
+      }
+      post { always { archiveArtifacts artifacts: 'gitleaks-report.json', allowEmptyArchive: true } }
+    }
+
     stage('Node checks') {
       agent { docker { image 'node:20-alpine'; reuseNode true } }
       stages {
@@ -23,11 +38,80 @@ pipeline {
             always {
               junit 'reports/junit.xml'
               recordCoverage(tools: [[parser: 'COBERTURA', pattern: 'coverage/cobertura-coverage.xml']])
-              // ถ้า plugin ของคุณเป็น Code Coverage API (ตามโจทย์) ใช้แทน:
-              // publishCoverage adapters: [coberturaAdapter('coverage/cobertura-coverage.xml')]
             }
           }
         }
+      }
+    }
+
+    stage('SAST — ESLint security') {
+      agent { docker { image 'node:20-alpine'; reuseNode true } }
+      steps { sh 'npx eslint "{src,test}/**/*.ts" -f @microsoft/eslint-formatter-sarif -o eslint.sarif' }
+      post { always { archiveArtifacts artifacts: 'eslint.sarif', allowEmptyArchive: true } }
+    }
+
+    stage('SAST — Semgrep') {
+      steps {
+        sh '''
+          docker run --rm --volumes-from jenkins -w "$WORKSPACE" \
+            semgrep/semgrep:latest semgrep scan \
+            --config=p/owasp-top-ten --config=p/nodejs \
+            --sarif --output semgrep.sarif src/
+        '''
+      }
+      post { always { archiveArtifacts artifacts: 'semgrep.sarif', allowEmptyArchive: true } }
+    }
+
+    stage('SCA — npm audit') {
+      agent { docker { image 'node:20-alpine'; reuseNode true } }
+      steps {
+        script {
+          sh 'npm audit --audit-level=high --json > audit.json || true'
+          // ใช้ node อ่าน JSON แทน jq (node:20-alpine ไม่มี jq)
+          def critical = sh(script: "node -p \"require('./audit.json').metadata.vulnerabilities.critical\"", returnStdout: true).trim().toInteger()
+          def high     = sh(script: "node -p \"require('./audit.json').metadata.vulnerabilities.high\"", returnStdout: true).trim().toInteger()
+          if (critical > 0) {
+            // catchError: stage + build เป็น FAILURE แต่ pipeline วิ่งต่อถึง Policy Gate
+            // เพื่อให้เห็นทั้งสอง gate ทำงานบนข้อมูลชุดเดียวกัน
+            catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
+              error("Blocking: ${critical} critical vulnerabilities found")
+            }
+          } else if (high > 0) {
+            unstable("Warning: ${high} high vulnerabilities (not blocking)")
+          } else {
+            echo "SCA passed with 0 critical vulnerabilities (warnings allowed)"
+          }
+        }
+      }
+      post { always { archiveArtifacts artifacts: 'audit.json', allowEmptyArchive: true } }
+    }
+
+    stage('Generate SBOM') {
+      steps {
+        sh '''
+          docker run --rm --volumes-from jenkins -w "$WORKSPACE" \
+            anchore/syft:latest dir:. -o cyclonedx-json=taskflow-api.cdx.json
+        '''
+        withCredentials([file(credentialsId: 'cosign-key', variable: 'COSIGN_KEY'),
+                         string(credentialsId: 'cosign-password', variable: 'COSIGN_PASSWORD')]) {
+          sh '''
+            docker run --rm --volumes-from jenkins -w "$WORKSPACE" -e COSIGN_PASSWORD \
+              gcr.io/projectsigstore/cosign:v2.4.1 sign-blob --yes --tlog-upload=false \
+              --key "$COSIGN_KEY" --output-signature taskflow-api.cdx.json.sig taskflow-api.cdx.json
+          '''
+        }
+      }
+      post { always { archiveArtifacts artifacts: 'taskflow-api.cdx.json,taskflow-api.cdx.json.sig', allowEmptyArchive: true } }
+    }
+
+    stage('Policy Gate') {
+      steps {
+        // --fail-defined: ถ้า deny มีสมาชิกแม้ 1 ตัว → exit code 1 → stage ล้ม
+        sh '''
+          docker run --rm --volumes-from jenkins -w "$WORKSPACE" \
+            openpolicyagent/opa:latest eval --fail-defined --format pretty \
+            --input audit.json --data policy/security.rego "data.security.deny[_]"
+        '''
       }
     }
 
@@ -52,7 +136,6 @@ pipeline {
       steps {
         sh 'cp .env.ci .env'
         sh 'docker compose -p taskflow-e2e -f docker-compose.yml -f docker-compose.ci.yml up -d --build --wait'
-        // schema ว่างจนกว่าจะ migrate (ไม่มี migrationsRun) — รันจาก dist/ จึงไม่ต้องพึ่ง ts-node
         sh 'docker compose -p taskflow-e2e exec -T api npx typeorm migration:run -d dist/config/data-source.js'
         sh 'docker compose -p taskflow-e2e exec -T api node dist/database/seed-rooms.js'
       }
@@ -61,8 +144,8 @@ pipeline {
     stage('E2E — Playwright') {
       agent {
         docker {
-          image 'mcr.microsoft.com/playwright:v1.63.0-noble'   // ให้ตรงกับเวอร์ชัน @playwright/test
-          args '--network taskflow-e2e_default'                // คุยกับ API ผ่าน network ของ compose
+          image 'mcr.microsoft.com/playwright:v1.63.0-noble'
+          args '--network taskflow-e2e_default'
           reuseNode true
         }
       }
@@ -100,7 +183,6 @@ pipeline {
 
   post {
     always {
-      // ปิด stack ทดสอบเสมอ แม้ pipeline ล้ม
       sh 'docker compose -p taskflow-e2e down -v || true'
       sh 'rm -f .env'
     }
