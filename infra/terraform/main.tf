@@ -78,10 +78,11 @@ resource "aws_security_group" "app" {
 
 resource "aws_instance" "app" {
   # checkov:skip=CKV2_AWS_41: lab host never calls AWS APIs, so an instance role would only add unused privilege
+  # checkov:skip=CKV_AWS_126: detailed monitoring needs EC2 MonitorInstances, which LocalStack Community does not implement (501 not yet implemented) - would be enabled against real AWS
   ami                    = var.ami_id
   instance_type          = "t3.micro"
   vpc_security_group_ids = [aws_security_group.app.id]
-  monitoring             = true
+  monitoring             = false
   ebs_optimized          = true
 
   metadata_options {
