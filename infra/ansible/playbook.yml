@@ -1,0 +1,48 @@
+---
+- name: Configure the Taskflow host
+  hosts: app
+  become: true
+  vars:
+    app_image: ""
+  tasks:
+    - name: Install base packages
+      ansible.builtin.apt:
+        name:
+          - ca-certificates
+          - curl
+          - docker.io
+        state: present
+        update_cache: true
+
+    - name: Download the NodeSource setup script
+      ansible.builtin.get_url:
+        url: https://deb.nodesource.com/setup_20.x
+        dest: /tmp/nodesource_setup.sh
+        mode: "0755"
+
+    - name: Register the NodeSource apt repository
+      ansible.builtin.command: /tmp/nodesource_setup.sh
+      args:
+        creates: /etc/apt/sources.list.d/nodesource.list
+
+    - name: Install Node.js 20
+      ansible.builtin.apt:
+        name: nodejs
+        state: present
+        update_cache: true
+
+    # A container used as a stand-in host has no systemd/dockerd, so these two are skipped there.
+    - name: Make sure Docker is running
+      ansible.builtin.service:
+        name: docker
+        state: started
+        enabled: true
+      when: ansible_virtualization_type | default('') != 'docker'
+
+    - name: Pull the Taskflow API image
+      ansible.builtin.command: "docker pull {{ app_image }}"
+      register: pull_result
+      changed_when: "'Downloaded newer image' in pull_result.stdout"
+      when:
+        - app_image | length > 0
+        - ansible_virtualization_type | default('') != 'docker'

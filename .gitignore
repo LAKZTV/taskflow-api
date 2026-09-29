@@ -18,3 +18,9 @@ gitleaks-report.json
 audit.json
 *.cdx.json
 *.sig
+*.tfstate
+*.tfstate.*
+.terraform/
+tfplan
+tfplan.txt
+infra/ansible/inventory.ini

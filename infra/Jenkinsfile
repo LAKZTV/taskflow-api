@@ -1,0 +1,106 @@
+// Lab 08 — IaC pipeline (Terraform + Ansible). Job "taskflow-infra", Script Path: infra/Jenkinsfile
+def dockerRun(String image, String workdir, String args) {
+  return "docker run --rm --volumes-from jenkins -w '${env.WORKSPACE}/${workdir}' ${image} ${args}"
+}
+def tf(String args)    { sh dockerRun('hashicorp/terraform:1.9', 'infra/terraform', args) }
+def tfOut(String args) { return sh(script: dockerRun('hashicorp/terraform:1.9', 'infra/terraform', args), returnStdout: true).trim() }
+
+pipeline {
+  agent { label 'built-in' }
+  options { timeout(time: 30, unit: 'MINUTES') }
+
+  parameters {
+    string(name: 'TARGET_HOST', defaultValue: '', description: 'ว่าง = ใช้ output instance_address ของ Terraform · LocalStack: host.docker.internal')
+    string(name: 'TARGET_PORT', defaultValue: '22', description: 'SSH port ของเครื่องเป้าหมาย (target container = 2222)')
+    string(name: 'APP_IMAGE',   defaultValue: '',   description: 'image ของ API ที่จะ pull บนเครื่องเป้าหมาย (ห้าม latest) — ว่าง = ข้าม')
+  }
+
+  stages {
+    stage('IaC Lint & Validate') {
+      parallel {
+        stage('Terraform Validate') {
+          steps {
+            tf 'init -backend=false -input=false'
+            tf 'validate'
+            tf 'fmt -check -recursive'
+          }
+        }
+        stage('Ansible Lint') {
+          steps {
+            sh '''
+              docker run --rm --volumes-from jenkins -w "$WORKSPACE/infra/ansible" python:3.12-slim \
+                sh -c "pip install -q ansible-core ansible-lint && ansible-lint playbook.yml"
+            '''
+          }
+        }
+      }
+    }
+
+    stage('IaC Security Scan') {
+      parallel {
+        stage('tfsec') {
+          steps { sh dockerRun('aquasec/tfsec:latest', 'infra/terraform', '. --no-colour') }
+        }
+        stage('Checkov') {
+          steps { sh dockerRun('bridgecrew/checkov:latest', 'infra/terraform', '-d . --framework terraform --compact --quiet') }
+        }
+      }
+    }
+
+    stage('Bootstrap state bucket') {
+      steps {
+        // ค่า dummy ของ LocalStack เท่านั้น
+        sh '''
+          docker run --rm -e AWS_ACCESS_KEY_ID=test -e AWS_SECRET_ACCESS_KEY=test -e AWS_DEFAULT_REGION=us-east-1 \
+            amazon/aws-cli --endpoint-url http://host.docker.internal:4566 s3 mb s3://taskflow-tfstate || true
+        '''
+      }
+    }
+
+    stage('Terraform Plan') {
+      steps {
+        tf 'init -input=false -reconfigure'
+        tf 'plan -input=false -out=tfplan'
+        sh dockerRun('hashicorp/terraform:1.9', 'infra/terraform', 'show -no-color tfplan') + ' > infra/terraform/tfplan.txt'
+      }
+      post { always { archiveArtifacts artifacts: 'infra/terraform/tfplan,infra/terraform/tfplan.txt', allowEmptyArchive: true } }
+    }
+
+    stage('Approval') {
+      steps {
+        script {
+          def summary = sh(script: "grep -E 'Plan:|No changes|will be (created|destroyed|updated)' infra/terraform/tfplan.txt || true", returnStdout: true).trim()
+          // apply ห้ามรันโดยไม่มีคนกด — รอจนกว่าจะอนุมัติ (ดูแผนเต็มที่ artifact tfplan.txt)
+          input message: "Apply this Terraform plan?\n\n${summary}", ok: 'Apply'
+        }
+      }
+    }
+
+    stage('Terraform Apply') {
+      steps {
+        tf 'apply -input=false tfplan'
+        script { echo "instance_address = ${tfOut('output -raw instance_address')}" }
+      }
+    }
+
+    stage('Configure with Ansible') {
+      steps {
+        script {
+          def host = params.TARGET_HOST ?: tfOut('output -raw instance_address')
+          // inventory สร้างจาก output ของ Terraform (dynamic) — รหัสผ่านอ่านจาก env ตอนรัน ไม่เขียนลงไฟล์
+          writeFile file: 'infra/ansible/inventory.ini',
+            text: "[app]\n${host} ansible_port=${params.TARGET_PORT} ansible_user=root " +
+                  "ansible_password='{{ lookup(\"env\",\"TARGET_PASS\") }}' " +
+                  "ansible_ssh_common_args='-o StrictHostKeyChecking=no' app_image=${params.APP_IMAGE}\n"
+        }
+        withCredentials([string(credentialsId: 'lab-target-pass', variable: 'TARGET_PASS')]) {
+          sh '''
+            docker run --rm --volumes-from jenkins -w "$WORKSPACE/infra/ansible" -e TARGET_PASS python:3.12-slim \
+              sh -c "apt-get update -qq && apt-get install -y -qq sshpass openssh-client >/dev/null \
+                     && pip install -q ansible-core && ansible-playbook -i inventory.ini playbook.yml"
+          '''
+        }
+      }
+    }
+  }
+}
