@@ -8,6 +8,8 @@ RUN npm run build
 
 # ---- production stage ----
 FROM node:20-alpine AS production
+ARG GIT_COMMIT=dev
+ENV GIT_COMMIT=$GIT_COMMIT
 WORKDIR /app
 ENV NODE_ENV=production
 COPY package*.json ./
