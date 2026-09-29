@@ -134,7 +134,7 @@ pipeline {
       steps {
         sh 'cp .env.ci .env'
         sh 'docker compose -p taskflow-e2e -f docker-compose.yml -f docker-compose.ci.yml up -d --build --wait'
-        sh 'docker compose -p taskflow-e2e exec -T api npx typeorm migration:run -d dist/config/data-source.js'
+        sh 'docker compose -p taskflow-e2e exec -T api node_modules/.bin/typeorm migration:run -d dist/config/data-source.js'
         sh 'docker compose -p taskflow-e2e exec -T api node dist/database/seed-rooms.js'
       }
     }
