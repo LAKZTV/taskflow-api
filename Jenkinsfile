@@ -95,7 +95,7 @@ pipeline {
         withCredentials([file(credentialsId: 'cosign-key', variable: 'COSIGN_KEY'),
                          string(credentialsId: 'cosign-password', variable: 'COSIGN_PASSWORD')]) {
           sh '''
-            docker run --rm --volumes-from jenkins -w "$WORKSPACE" -e COSIGN_PASSWORD \
+            docker run --rm -u 0:0 --volumes-from jenkins -w "$WORKSPACE" -e COSIGN_PASSWORD \
               gcr.io/projectsigstore/cosign:v2.4.1 sign-blob --yes --tlog-upload=false \
               --key "$COSIGN_KEY" --output-signature taskflow-api.cdx.json.sig taskflow-api.cdx.json
           '''
