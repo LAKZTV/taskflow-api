@@ -81,7 +81,7 @@ spec:
     spec:
       containers:
         - name: app                      # ชื่อ "app" ต้องตรงกับ kubectl set image ... app=<image>
-          image: taskflow-api:bootstrap  # ถูกแทนที่ด้วย pipeline / ขั้นตอน bootstrap
+          image: registry:5000/taskflow-api:bootstrap  # ถูกแทนที่ด้วย pipeline / ขั้นตอน bootstrap
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 3000
@@ -114,7 +114,7 @@ spec:
     spec:
       containers:
         - name: app
-          image: taskflow-api:bootstrap
+          image: registry:5000/taskflow-api:bootstrap
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 3000
