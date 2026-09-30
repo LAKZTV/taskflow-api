@@ -103,7 +103,6 @@
   },
   "overrides": {
     "multer": "^2.4.0",
-    "lodash": "^4.18.1",
-    "brace-expansion": "^2.1.5"
+    "lodash": "^4.18.1"
   }
 }
