@@ -21,6 +21,7 @@ audit.json
 *.tfstate
 *.tfstate.*
 .terraform/
+.terraform.lock.hcl
 tfplan
 tfplan.txt
 infra/ansible/inventory.ini
