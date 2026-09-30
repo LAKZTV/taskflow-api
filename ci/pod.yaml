@@ -7,34 +7,55 @@ spec:
       image: node:20-alpine
       command: ['cat']
       tty: true
+      resources:
+        requests: { cpu: '250m', memory: 256Mi }
+        limits: { memory: 1Gi }
     - name: gitleaks
       image: zricethezav/gitleaks:latest
       command: ['cat']
       tty: true
+      resources:
+        requests: { cpu: '100m', memory: 128Mi }
+        limits: { memory: 384Mi }
     - name: semgrep
       image: semgrep/semgrep:latest
       command: ['cat']
       tty: true
+      resources:
+        requests: { cpu: '250m', memory: 256Mi }
+        limits: { memory: 640Mi }
     - name: sonar
       image: sonarsource/sonar-scanner-cli:latest
       command: ['cat']
       tty: true
+      resources:
+        requests: { cpu: '250m', memory: 256Mi }
+        limits: { memory: 896Mi }
     - name: trivy
       image: aquasec/trivy:latest
       command: ['cat']
       tty: true
       env:
         - { name: DOCKER_HOST, value: 'tcp://localhost:2375' }
+      resources:
+        requests: { cpu: '100m', memory: 128Mi }
+        limits: { memory: 512Mi }
     - name: playwright
       image: mcr.microsoft.com/playwright:v1.63.0-noble
       command: ['cat']
       tty: true
+      resources:
+        requests: { cpu: '250m', memory: 512Mi }
+        limits: { memory: 1280Mi }
     - name: docker
       image: docker:27-cli
       command: ['cat']
       tty: true
       env:
         - { name: DOCKER_HOST, value: 'tcp://localhost:2375' }
+      resources:
+        requests: { cpu: '100m', memory: 64Mi }
+        limits: { memory: 256Mi }
     - name: dind
       image: docker:27-dind
       args: ['--insecure-registry=registry:5000']
@@ -42,3 +63,6 @@ spec:
         privileged: true
       env:
         - { name: DOCKER_TLS_CERTDIR, value: '' }
+      resources:
+        requests: { cpu: '250m', memory: 512Mi }
+        limits: { memory: 1280Mi }
