@@ -105,12 +105,12 @@ pipeline {
                                string(credentialsId: 'cosign-password', variable: 'COSIGN_PASSWORD')]) {
                 sh '''
                   docker run --rm -u 0:0 -v "$PWD":/w -v "$COSIGN_KEY":/cosign.key:ro -w /w -e COSIGN_PASSWORD \
-                    --entrypoint sh gcr.io/projectsigstore/cosign:v2.4.1 -c '
-                      cosign sign-blob --yes --tlog-upload=false --key /cosign.key \
-                        --output-signature taskflow-api.cdx.json.sig taskflow-api.cdx.json &&
-                      chmod 644 taskflow-api.cdx.json taskflow-api.cdx.json.sig
-                    '
+                    gcr.io/projectsigstore/cosign:v2.4.1 sign-blob --yes --tlog-upload=false \
+                    --key /cosign.key --output-signature taskflow-api.cdx.json.sig taskflow-api.cdx.json
                 '''
+                // cosign image is distroless (no shell, so the chmod above can't run inside it) -
+                // fix up ownership from here instead so archiveArtifacts (running as the jenkins user) can read the files
+                sh 'chmod 644 taskflow-api.cdx.json taskflow-api.cdx.json.sig'
               }
               sh '''
                 docker run --rm -v "$PWD":/w -w /w openpolicyagent/opa:latest eval --fail-defined \
